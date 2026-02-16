@@ -1,10 +1,15 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import asyncio
+import os
+import uvicorn
+from dotenv import load_dotenv
 
 from app.schemas import QuizRequest
 from app.prompts import build_system_prompt
 from app.ai import call_openai, call_gemini
+
+load_dotenv()
 
 app = FastAPI(title="Quiz AI Backend")
 
@@ -34,3 +39,7 @@ async def answer_quiz(req: QuizRequest):
         "gemini": gemini_res,
         "openai": openai_res,
     }
+
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
