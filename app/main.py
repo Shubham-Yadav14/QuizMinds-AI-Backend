@@ -1,8 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import asyncio
-import os
-import uvicorn
 from dotenv import load_dotenv
 
 from app.schemas import QuizRequest
@@ -28,7 +26,6 @@ async def answer_quiz(req: QuizRequest):
 
     system_prompt = build_system_prompt(req.subject)
 
-    # Parallel calls (same as Promise.all)
     gemini_res, openai_res = await asyncio.gather(
         call_gemini(system_prompt, req.question),
         call_openai(system_prompt, req.question),
@@ -39,7 +36,3 @@ async def answer_quiz(req: QuizRequest):
         "gemini": gemini_res,
         "openai": openai_res,
     }
-
-if __name__ == "__main__":
-    port = int(os.getenv("PORT", 8000))
-    uvicorn.run(app, host="0.0.0.0", port=port)
