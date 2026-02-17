@@ -12,6 +12,8 @@ from collections import deque, defaultdict
 from app.schemas import QuizRequest
 from app.prompts import build_system_prompt
 from app.ai import call_openai, call_gemini
+from fastapi.responses import StreamingResponse
+import json
 
 load_dotenv()
 
@@ -67,36 +69,49 @@ async def server_health():
         "health":"server running"
     }
 
-@app.post("/askGemini")
+@app.post("/answerQuiz")
 async def answer_quiz(req: QuizRequest):
     if not req.subject or not req.question:
         raise HTTPException(status_code=400, detail="Subject and question are required")
 
     system_prompt = build_system_prompt(req.subject)
+    # Start both model calls concurrently and stream results as they finish.
+    async def event_stream():
+        tasks = {
+            asyncio.create_task(call_gemini(system_prompt, req.question)): "gemini",
+            asyncio.create_task(call_openai(system_prompt, req.question)): "openai",
+        }
 
-    gemini_res = await asyncio.gather(
-        call_gemini(system_prompt, req.question),
-    )
+        pending = set(tasks.keys())
 
-    return {
-        "success":True,
-        "modal": "gemini",
-        "result": gemini_res,
-    }
+        while pending:
+            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+            for d in done:
+                model = tasks[d]
+                try:
+                    res = await d
+                except Exception as e:
+                    payload = {"model": model, "answer": "", "error": str(e)}
+                else:
+                    # normalize tuple returns from ai functions
+                    if isinstance(res, tuple):
+                        val = res[0] if len(res) > 0 else ""
+                    else:
+                        val = res
+
+                    if isinstance(val, dict):
+                        payload = val
+                        payload.setdefault("model", model)
+                    else:
+                        payload = {"model": model, "answer": val}
+
+                # Server-Sent Events format: event + data
+                yield f"event: {model}\n"
+                yield f"data: {json.dumps(payload)}\n\n"
+
+        # send a final event to indicate completion
+        yield "event: done\n"
+        yield "data: {}\n\n"
+
+    return StreamingResponse(event_stream(), media_type="text/event-stream")
     
-@app.post("/askOpenAi")
-async def answer_quiz(req: QuizRequest):
-    if not req.subject or not req.question:
-        raise HTTPException(status_code=400, detail="Subject and question are required")
-
-    system_prompt = build_system_prompt(req.subject)
-
-    openai_res = await asyncio.gather(
-        call_openai(system_prompt, req.question),
-    )
-
-    return {
-        "success":True,
-        "modal": "openAi",
-        "result": openai_res,
-    }

@@ -38,20 +38,15 @@ async def call_openai(system_prompt: str, question: str):
 
         if response.status_code != 200:
             return {
-                "model": "LLaMA-3",
                 "answer": "",
                 "error": response.text,
             }
 
         data = response.json()
-        return {
-            "model": "LLaMA-3",
-            "answer": data["choices"][0]["message"]["content"].strip(),
-        }
+        return  data["choices"][0]["message"]["content"].strip(),
 
     except Exception as e:
         return {
-            "model": "LLaMA-3",
             "answer": "",
             "error": str(e),
         }
@@ -91,12 +86,8 @@ async def call_gemini(system_prompt: str, question: str):
             else:
                 continue
             
-            display_name = model_name.replace('gemini-', 'Gemini-').replace('-', ' ').title()
 
-            return {
-                "model": display_name,
-                "answer": answer,
-            }
+            return  answer,
         except Exception as e:
             # Log error for debugging but continue to next model
             continue  # Try next model
@@ -139,12 +130,8 @@ async def call_gemini(system_prompt: str, question: str):
                 if response.status_code == 200:
                     data = response.json()
                     answer = data["candidates"][0]["content"]["parts"][0]["text"]
-                    display_name = model_name.replace('gemini-', 'Gemini-').replace('-', ' ').title()
 
-                    return {
-                        "model": display_name,
-                        "answer": answer.strip(),
-                    }
+                    return  answer.strip(),
         except Exception:
             continue  # Try next model
     
