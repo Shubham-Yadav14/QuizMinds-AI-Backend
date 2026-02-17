@@ -3,6 +3,12 @@ from fastapi.middleware.cors import CORSMiddleware
 import asyncio
 from dotenv import load_dotenv
 
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+import time
+from collections import deque, defaultdict
+
 from app.schemas import QuizRequest
 from app.prompts import build_system_prompt
 from app.ai import call_openai, call_gemini
@@ -19,20 +25,78 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.post("/answerQuestion")
+
+class RateLimitMiddleware(BaseHTTPMiddleware):
+    def __init__(self, app, max_requests=9, window_seconds=60):
+        super().__init__(app)
+        self.max_requests = max_requests
+        self.window = window_seconds
+        self.requests = defaultdict(deque)
+        self.lock = asyncio.Lock()
+
+    async def dispatch(self, request: Request, call_next):
+        # determine client IP (trust X-Forwarded-For if present)
+        xff = request.headers.get("x-forwarded-for")
+        if xff:
+            ip = xff.split(",")[0].strip()
+        else:
+            ip = request.client.host if request.client else "unknown"
+
+        now = time.time()
+        async with self.lock:
+            dq = self.requests[ip]
+            # drop timestamps outside the window
+            while dq and dq[0] <= now - self.window:
+                dq.popleft()
+            # if adding this request would reach 10 within the window, block
+            if len(dq) >= self.max_requests:
+                return JSONResponse({"detail": "Too many requests - rate limit exceeded"}, status_code=429)
+            dq.append(now)
+
+        response = await call_next(request)
+        return response
+
+
+# Add rate limiting middleware: blocks the 10th request within 60 seconds
+app.add_middleware(RateLimitMiddleware, max_requests=9, window_seconds=60)
+
+
+@app.get("/")
+async def server_health():
+    return {
+        "health":"server running"
+    }
+
+@app.post("/askGemini")
 async def answer_quiz(req: QuizRequest):
     if not req.subject or not req.question:
         raise HTTPException(status_code=400, detail="Subject and question are required")
 
     system_prompt = build_system_prompt(req.subject)
 
-    gemini_res, openai_res = await asyncio.gather(
+    gemini_res = await asyncio.gather(
         call_gemini(system_prompt, req.question),
+    )
+
+    return {
+        "success":True,
+        "modal": "gemini",
+        "result": gemini_res,
+    }
+    
+@app.post("/askOpenAi")
+async def answer_quiz(req: QuizRequest):
+    if not req.subject or not req.question:
+        raise HTTPException(status_code=400, detail="Subject and question are required")
+
+    system_prompt = build_system_prompt(req.subject)
+
+    openai_res = await asyncio.gather(
         call_openai(system_prompt, req.question),
     )
 
     return {
-        "subject": req.subject,
-        "gemini": gemini_res,
-        "openai": openai_res,
+        "success":True,
+        "modal": "openAi",
+        "result": openai_res,
     }
